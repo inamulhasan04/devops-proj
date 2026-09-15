@@ -1,0 +1,71 @@
+services:
+
+  database:
+
+    image: postgres:16
+
+    container_name: employee-db
+
+    environment:
+
+      POSTGRES_DB: employeedb
+
+      POSTGRES_USER: postgres
+
+      POSTGRES_PASSWORD: postgres
+
+    volumes:
+
+      - postgres_data:/var/lib/postgresql/data
+
+    ports:
+
+      - "5432:5432"
+
+
+  backend:
+
+    build:
+      context: ./backend
+
+    container_name: employee-backend
+
+    environment:
+
+      DB_URL: jdbc:postgresql://database:5432/employeedb
+
+      DB_USERNAME: postgres
+
+      DB_PASSWORD: postgres
+
+    depends_on:
+
+      - database
+
+    ports:
+
+      - "8080:8080"
+
+
+  frontend:
+
+    image: nginx:alpine
+
+    container_name: employee-frontend
+
+    volumes:
+
+      - ./frontend:/usr/share/nginx/html
+
+    ports:
+
+      - "80:80"
+
+    depends_on:
+
+      - backend
+
+
+volumes:
+
+  postgres_data:
