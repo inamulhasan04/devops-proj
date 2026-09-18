@@ -1,0 +1,699 @@
+Yes. The image shows a Harbor Registry Lab Assessment — 100 marks, divided into 5 tasks:
+Task
+What you must do
+Marks
+1
+Install Harbor using Docker Compose
+20
+2
+Configure Harbor with HTTPS
+20
+3
+Create Projects and Users
+20
+4
+Push and Pull Docker Images
+20
+5
+Verify Image Repository and Access
+20
+Below is a complete beginner-friendly procedure you can follow on an Ubuntu VM/EC2 instance.
+Harbor can be deployed with Docker Compose. Current Harbor documentation lists Docker Engine >20.10, Docker Compose >2.3, minimum 2 CPU/4 GB RAM/40 GB disk, with 4 CPU/8 GB recommended. �
+Harbor
+0. Lab Architecture
+For your assessment, use this simple architecture:
+                Your Laptop / Browser
+                        |
+                        | HTTPS :443
+                        v
+              +---------------------+
+              |   Harbor Server     |
+              |      Ubuntu         |
+              |                     |
+              |  Harbor Portal      |
+              |  Registry           |
+              |  Database           |
+              |  Redis              |
+              |  Trivy Scanner      |
+              +----------+----------+
+                         |
+                         |
+                  Docker Images
+                         |
+             +-----------+-----------+
+             |                       |
+          Project                 Project
+          devops                 production
+             |
+        Docker Images
+For the lab, I'll assume:
+Harbor server IP = 192.168.1.100
+Harbor hostname = harbor.local
+Harbor project  = devops
+Important: Replace 192.168.1.100 with your actual Ubuntu server IP.
+Find it with:
+hostname -I
+Example:
+192.168.1.100
+TASK 1 — Install Harbor Using Docker Compose
+Step 1 — Update Ubuntu
+sudo apt update
+sudo apt upgrade -y
+Step 2 — Check Docker
+docker --version
+and:
+docker compose version
+You should get something similar to:
+Docker version 27.x
+Docker Compose version v2.x
+If Docker isn't installed, install it:
+sudo apt update
+sudo apt install -y docker.io docker-compose-plugin
+Start Docker:
+sudo systemctl enable --now docker
+Check:
+sudo systemctl status docker
+Press:
+q
+to exit.
+Step 3 — Install Required Packages
+sudo apt install -y wget curl openssl tar
+Step 4 — Download Harbor
+For the assessment, use a stable Harbor release rather than a release candidate. Harbor's official releases currently include stable v2.15.2. �
+GitHub
+Download:
+cd /tmp
+wget https://github.com/goharbor/harbor/releases/download/v2.15.2/harbor-online-installer-v2.15.2.tgz
+Extract:
+tar -xzf harbor-online-installer-v2.15.2.tgz
+Move it:
+sudo mv harbor /opt/
+Go inside:
+cd /opt/harbor
+Check:
+ls
+You should see files similar to:
+common.sh
+harbor.yml.tmpl
+install.sh
+prepare
+LICENSE
+Step 5 — Create Harbor Configuration
+Copy the template:
+sudo cp harbor.yml.tmpl harbor.yml
+Open it:
+sudo nano harbor.yml
+TASK 2 — Configure HTTPS
+This is an important part of your assessment.
+Harbor's official documentation recommends HTTPS for production/non-air-gapped environments. �
+Harbor
+For this lab, we'll create a self-signed certificate.
+Step 6 — Decide Your Harbor Hostname
+Let's use:
+harbor.local
+Your harbor.yml should eventually contain:
+hostname: harbor.local
+Find this section:
+hostname: reg.mydomain.com
+Change it to:
+hostname: harbor.local
+Step 7 — Configure Harbor Admin Password
+Find:
+harbor_admin_password:
+Set:
+harbor_admin_password: Harbor@123
+You can use another strong password.
+Your first login will be:
+Username: admin
+Password: Harbor@123
+Step 8 — Configure HTTPS
+In harbor.yml, find the HTTPS section:
+https:
+  port: 443
+  certificate: /your/certificate/path
+  private_key: /your/private/key/path
+We'll use:
+https:
+  port: 443
+  certificate: /data/cert/harbor.local.crt
+  private_key: /data/cert/harbor.local.key
+Save the file.
+In nano:
+CTRL + O
+ENTER
+CTRL + X
+Step 9 — Generate Certificate Authority
+Create a certificate directory:
+sudo mkdir -p /data/cert
+Go there:
+cd /data/cert
+Generate CA private key:
+sudo openssl genrsa -out ca.key 4096
+Generate CA certificate:
+sudo openssl req -x509 -new -nodes -sha512 -days 3650 \
+-subj "/C=IN/ST=TamilNadu/L=Chennai/O=KIAQ/OU=DevOps/CN=Harbor-CA" \
+-key ca.key \
+-out ca.crt
+Step 10 — Generate Harbor Private Key
+sudo openssl genrsa -out harbor.local.key 4096
+Step 11 — Create Certificate Signing Request
+sudo openssl req -sha512 -new \
+-subj "/C=IN/ST=TamilNadu/L=Chennai/O=KIAQ/OU=DevOps/CN=harbor.local" \
+-key harbor.local.key \
+-out harbor.local.csr
+Step 12 — Create SAN Configuration
+This step is important because modern clients validate the Subject Alternative Name.
+Run:
+sudo nano /data/cert/v3.ext
+Add:
+authorityKeyIdentifier=keyid,issuer
+basicConstraints=CA:FALSE
+keyUsage=digitalSignature,nonRepudiation,keyEncipherment,dataEncipherment
+extendedKeyUsage=serverAuth
+
+subjectAltName=@alt_names
+
+[alt_names]
+DNS.1=harbor.local
+DNS.2=localhost
+IP.1=192.168.1.100
+Change this:
+192.168.1.100
+to your actual Harbor server IP.
+Save:
+CTRL + O
+ENTER
+CTRL + X
+Step 13 — Generate Harbor Certificate
+Run:
+sudo openssl x509 -req -sha512 -days 3650 \
+-extfile /data/cert/v3.ext \
+-CA /data/cert/ca.crt \
+-CAkey /data/cert/ca.key \
+-CAcreateserial \
+-in /data/cert/harbor.local.csr \
+-out /data/cert/harbor.local.crt
+Check:
+ls -l /data/cert
+You should have:
+ca.crt
+ca.key
+ca.srl
+harbor.local.crt
+harbor.local.csr
+harbor.local.key
+v3.ext
+Step 14 — Configure Your Ubuntu Machine to Trust the Certificate
+Copy CA certificate:
+sudo cp /data/cert/ca.crt /usr/local/share/ca-certificates/harbor-ca.crt
+Update certificates:
+sudo update-ca-certificates
+Step 15 — Configure Docker to Trust Harbor
+Create:
+sudo mkdir -p /etc/docker/certs.d/harbor.local
+Convert certificate:
+sudo openssl x509 \
+-in /data/cert/harbor.local.crt \
+-out /etc/docker/certs.d/harbor.local/harbor.local.cert
+Copy key:
+sudo cp /data/cert/harbor.local.key \
+/etc/docker/certs.d/harbor.local/harbor.local.key
+Copy CA:
+sudo cp /data/cert/ca.crt \
+/etc/docker/certs.d/harbor.local/ca.crt
+Harbor's documentation specifies this Docker certificate directory arrangement for Docker clients using a private CA. �
+Harbor
+Restart Docker:
+sudo systemctl restart docker
+Step 16 — Configure /etc/hosts
+Your computer needs to know that:
+harbor.local
+means:
+192.168.1.100
+On the machine from which you'll access Harbor, edit:
+sudo nano /etc/hosts
+Add:
+192.168.1.100 harbor.local
+Save.
+Test:
+ping -c 3 harbor.local
+You should see:
+PING harbor.local (192.168.1.100)
+If you're using a separate laptop to access Harbor, add the same entry to the laptop's hosts file.
+Step 17 — Prepare Harbor
+Go to Harbor:
+cd /opt/harbor
+Run:
+sudo ./prepare
+If successful, you'll see Harbor generating configuration files.
+Step 18 — Install Harbor
+For your lab, I recommend including Trivy because it demonstrates vulnerability scanning.
+Run:
+sudo ./install.sh --with-trivy
+This can take several minutes.
+Harbor's official installer supports --with-trivy to deploy the Trivy scanning service. �
+Harbor
+Step 19 — Check Harbor Containers
+Run:
+docker compose ps
+You should see multiple Harbor services.
+For example:
+harbor-core
+harbor-db
+harbor-jobservice
+harbor-log
+harbor-nginx
+harbor-portal
+harbor-registry
+harbor-redis
+harbor-trivy
+registryctl
+All should ideally show:
+Up
+or healthy/running status.
+Step 20 — Check Logs
+If something is not running:
+docker compose ps
+Then:
+docker compose logs --tail=100
+For a specific service:
+docker compose logs harbor-core
+or:
+docker compose logs registry
+Step 21 — Open Harbor
+Open your browser:
+https://harbor.local
+You should see the Harbor login page.
+Because you're using a self-signed CA, the browser may initially complain that the CA isn't trusted. That's expected until the CA is trusted by the browser. Harbor documents this behavior for self-signed certificates. �
+Harbor
+TASK 3 — Create Projects and Users
+Now your Harbor installation is complete.
+Login:
+Username:
+admin
+
+Password:
+Harbor@123
+Step 22 — Create a Project
+Go to:
+Projects
+        ↓
+New Project
+Create:
+Project Name: devops
+For assessment purposes, choose:
+Private
+Why?
+Because you'll be able to demonstrate access control.
+Harbor projects contain repositories, and Harbor applies RBAC permissions at the project level. Private projects restrict pulling to project members. �
+Harbor
+Step 23 — Create a Harbor User
+Go to:
+Administration
+       ↓
+Users
+       ↓
+New User
+Create:
+Username: devopsuser
+Email: devops@example.com
+Password: Devops@123
+Then create the user.
+Step 24 — Add User to Project
+Go:
+Projects
+   ↓
+devops
+   ↓
+Members
+   ↓
+Add Member
+Select:
+devopsuser
+Give an appropriate role, for example:
+Developer
+Now the user has project-level access.
+Harbor supports adding existing users to projects and assigning project roles. �
+Harbor
+TASK 4 — Push and Pull Docker Images
+This is probably the most important practical part.
+Step 25 — Login to Harbor
+From your Docker client:
+docker login harbor.local
+Enter:
+Username: devopsuser
+Password: Devops@123
+Expected:
+Login Succeeded
+Step 26 — Download a Docker Image
+Let's use nginx:
+docker pull nginx:latest
+Check:
+docker images
+You should see:
+nginx    latest
+Step 27 — Tag Image for Harbor
+This is very important.
+Harbor image format is:
+<harbor-host>/<project>/<repository>:<tag>
+For example:
+harbor.local/devops/nginx:latest
+Run:
+docker tag nginx:latest harbor.local/devops/nginx:latest
+Check:
+docker images
+You should now see:
+nginx
+harbor.local/devops/nginx
+Harbor's official Docker workflow uses the same project/repository/tag structure. �
+Harbor
+Step 28 — Push Image to Harbor
+Run:
+docker push harbor.local/devops/nginx:latest
+You should see layers being uploaded.
+Eventually:
+latest: digest: sha256:...
+Step 29 — Verify in Harbor UI
+Go to:
+Harbor
+ ↓
+Projects
+ ↓
+devops
+ ↓
+Repositories
+You should see:
+nginx
+Click:
+nginx
+You should see:
+Tag: latest
+This proves your push was successful.
+Step 30 — Pull the Image
+First remove the local image:
+docker rmi harbor.local/devops/nginx:latest
+You can also remove nginx:
+docker rmi nginx:latest
+Check:
+docker images
+Now pull from Harbor:
+docker pull harbor.local/devops/nginx:latest
+You should see the layers downloading.
+This proves Harbor can serve the image.
+TASK 5 — Verify Image Repository and Access
+Now you need to demonstrate that your Harbor repository and permissions actually work.
+Step 31 — Verify Docker Login
+docker login harbor.local
+Expected:
+Login Succeeded
+Step 32 — Verify Repository
+Run:
+docker images
+You should see:
+REPOSITORY                         TAG
+harbor.local/devops/nginx         latest
+Step 33 — Run the Image
+Run:
+docker run -d --name harbor-nginx -p 8080:80 \
+harbor.local/devops/nginx:latest
+Check:
+docker ps
+You should see:
+harbor-nginx
+Test:
+curl http://localhost:8080
+You should receive HTML from nginx.
+Step 34 — Verify Harbor Repository Using API
+You can also verify the registry endpoint:
+curl -k https://harbor.local/v2/
+You should receive something indicating authentication is required, such as:
+UNAUTHORIZED
+That's actually useful evidence that the Harbor Registry API is responding.
+Step 35 — Verify Harbor Containers
+Run:
+docker compose ps
+Take a screenshot.
+This is one of your assessment screenshots.
+Step 36 — Verify HTTPS
+Run:
+curl -I https://harbor.local
+You should receive an HTTP response, such as:
+HTTP/1.1 200 OK
+or a redirect/authorization-related response depending on the endpoint.
+You can also check:
+openssl s_client -connect harbor.local:443 \
+-servername harbor.local
+Look for certificate information.
+Step 37 — Verify Repository
+In Harbor UI:
+Projects
+ ↓
+devops
+ ↓
+Repositories
+ ↓
+nginx
+ ↓
+Artifacts
+You should see:
+nginx
+ └── latest
+Take a screenshot.
+Step 38 — Verify Pull Permission
+Login as:
+devopsuser
+Then:
+docker pull harbor.local/devops/nginx:latest
+Successful pull = permission works.
+Step 39 — Verify Push Permission
+Tag another image:
+docker pull alpine:latest
+Then:
+docker tag alpine:latest harbor.local/devops/alpine:latest
+Push:
+docker push harbor.local/devops/alpine:latest
+Go to:
+Harbor
+ ↓
+Projects
+ ↓
+devops
+ ↓
+Repositories
+You should now have:
+nginx
+alpine
+This demonstrates both push and pull.
+OPTIONAL — Robot Account
+Since this is a DevOps/Harbor assessment, I strongly recommend demonstrating a robot account as well.
+Robot accounts are intended for automation such as CI/CD pipelines. They cannot log into the Harbor UI and can be scoped to a project. �
+Harbor
+Go:
+Projects
+ ↓
+devops
+ ↓
+Robot Accounts
+ ↓
+New Robot Account
+Name:
+jenkins
+Give it permissions including:
+Pull Repository
+Push Repository
+Harbor requires Push Repository to be accompanied by Pull Repository. �
+Harbor
+Harbor will show a secret.
+Save the secret immediately. Harbor does not store robot secrets in a way that lets you retrieve the original secret later. �
+Harbor
+Then:
+docker login harbor.local
+Username will look similar to:
+robot$devops+jenkins
+Password:
+<robot-secret>
+Then:
+docker push harbor.local/devops/nginx:latest
+Very Important: Your Assessment Evidence
+The image specifically mentions a Submission Checklist.
+You should collect these screenshots.
+Screenshot 1 — Installation
+Run:
+docker compose ps
+Screenshot showing Harbor services running.
+Screenshot 2 — HTTPS
+Browser:
+https://harbor.local
+Show the Harbor login page and HTTPS connection.
+Screenshot 3 — Project
+Harbor:
+Projects → devops
+Show your project.
+Screenshot 4 — User
+Show:
+devops
+ → Members
+ → devopsuser
+Screenshot 5 — Docker Login
+Terminal:
+docker login harbor.local
+Show:
+Login Succeeded
+Screenshot 6 — Docker Push
+docker push harbor.local/devops/nginx:latest
+Screenshot 7 — Repository
+Harbor:
+Projects
+ → devops
+ → Repositories
+ → nginx
+Show:
+latest
+Screenshot 8 — Docker Pull
+docker pull harbor.local/devops/nginx:latest
+Screenshot 9 — Running Container
+docker ps
+Show:
+harbor-nginx
+Complete Command Flow
+If you want the short version to actually perform the assessment, your workflow is:
+# 1. Update
+sudo apt update
+sudo apt upgrade -y
+
+# 2. Install prerequisites
+sudo apt install -y docker.io docker-compose-plugin wget curl openssl tar
+
+# 3. Start Docker
+sudo systemctl enable --now docker
+
+# 4. Download Harbor
+cd /tmp
+wget https://github.com/goharbor/harbor/releases/download/v2.15.2/harbor-online-installer-v2.15.2.tgz
+
+# 5. Extract
+tar -xzf harbor-online-installer-v2.15.2.tgz
+
+# 6. Move
+sudo mv harbor /opt/
+
+# 7. Enter Harbor
+cd /opt/harbor
+
+# 8. Configure
+sudo cp harbor.yml.tmpl harbor.yml
+sudo nano harbor.yml
+
+# 9. Generate HTTPS certificates
+sudo mkdir -p /data/cert
+cd /data/cert
+
+sudo openssl genrsa -out ca.key 4096
+
+sudo openssl req -x509 -new -nodes -sha512 -days 3650 \
+-subj "/C=IN/ST=TamilNadu/L=Chennai/O=KIAQ/OU=DevOps/CN=Harbor-CA" \
+-key ca.key -out ca.crt
+
+sudo openssl genrsa -out harbor.local.key 4096
+
+sudo openssl req -sha512 -new \
+-subj "/C=IN/ST=TamilNadu/L=Chennai/O=KIAQ/OU=DevOps/CN=harbor.local" \
+-key harbor.local.key \
+-out harbor.local.csr
+
+# Create v3.ext
+sudo nano /data/cert/v3.ext
+
+# Generate certificate
+sudo openssl x509 -req -sha512 -days 3650 \
+-extfile /data/cert/v3.ext \
+-CA /data/cert/ca.crt \
+-CAkey /data/cert/ca.key \
+-CAcreateserial \
+-in /data/cert/harbor.local.csr \
+-out /data/cert/harbor.local.crt
+
+# 10. Trust CA
+sudo cp /data/cert/ca.crt /usr/local/share/ca-certificates/harbor-ca.crt
+sudo update-ca-certificates
+
+# 11. Docker trust
+sudo mkdir -p /etc/docker/certs.d/harbor.local
+
+sudo openssl x509 \
+-in /data/cert/harbor.local.crt \
+-out /etc/docker/certs.d/harbor.local/harbor.local.cert
+
+sudo cp /data/cert/harbor.local.key \
+/etc/docker/certs.d/harbor.local/harbor.local.key
+
+sudo cp /data/cert/ca.crt \
+/etc/docker/certs.d/harbor.local/ca.crt
+
+sudo systemctl restart docker
+
+# 12. Prepare
+cd /opt/harbor
+sudo ./prepare
+
+# 13. Install
+sudo ./install.sh --with-trivy
+
+# 14. Check
+docker compose ps
+Then:
+# Login
+docker login harbor.local
+
+# Pull image
+docker pull nginx:latest
+
+# Tag
+docker tag nginx:latest harbor.local/devops/nginx:latest
+
+# Push
+docker push harbor.local/devops/nginx:latest
+
+# Remove local copy
+docker rmi harbor.local/devops/nginx:latest
+
+# Pull from Harbor
+docker pull harbor.local/devops/nginx:latest
+
+# Run
+docker run -d --name harbor-nginx -p 8080:80 \
+harbor.local/devops/nginx:latest
+
+# Verify
+docker ps
+curl http://localhost:8080
+What you should be able to explain to the trainer
+If they ask "What is Harbor?", say:
+Harbor is an open-source cloud-native container registry used to securely store, manage, scan and distribute container images. It provides projects, RBAC, authentication, vulnerability scanning, replication and image management.
+If they ask "Why HTTPS?":
+HTTPS encrypts communication between Docker clients and Harbor and protects credentials and image transfers from interception.
+If they ask "Why project?":
+A Harbor project groups repositories and provides project-level access control through RBAC.
+If they ask "What is the image naming format?":
+harbor-host/project/repository:tag
+Example:
+harbor.local/devops/nginx:latest
+If they ask "What happens when you push?":
+Docker Client
+     ↓
+docker login
+     ↓
+Harbor Authentication
+     ↓
+Project Permission Check
+     ↓
+Registry
+     ↓
+Image Layers
+     ↓
+Repository
+     ↓
+Tag
+This directly covers all 5 × 20 marks = 100 marks in your assessment. The official Harbor documentation confirms the project-before-push workflow and the Docker tag/push/pull process. �
+Harbor +1
+One important point: if your trainer specifically requires the Harbor hostname to be your EC2 public DNS/IP, don't blindly use harbor.local; the certificate SAN, AWS Security Group, and /etc/hosts setup need to match the actual hostname you use.
