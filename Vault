@@ -1,0 +1,423 @@
+Yes. Your assessment has 5 tasks × 20 marks = 100 marks. I’d do it as a small single-node Vault lab on Ubuntu, using the CLI. This also gives you screenshots for the submission checklist.
+The flow is:
+Install → Initialize → Unseal → Authentication → KV Engine → Store/Retrieve Secret → Policy → Verify Access
+HashiCorp's current documentation follows the same core workflow: initialize the server, unseal it, configure an auth method, enable KV, store secrets, and test an ACL policy. �
+HashiCorp Developer +1
+Task 1 — Install and Initialize Vault — 20 Marks
+Step 1: Check Ubuntu
+Open Terminal:
+lsb_release -a
+Then:
+uname -m
+You should see something like:
+x86_64
+Step 2: Install required packages
+sudo apt update
+sudo apt install -y gpg wget curl
+Step 3: Add HashiCorp repository
+wget -O- https://apt.releases.hashicorp.com/gpg | \
+gpg --dearmor | \
+sudo tee /usr/share/keyrings/hashicorp-archive-keyring.gpg > /dev/null
+Then:
+echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] \
+https://apt.releases.hashicorp.com $(lsb_release -cs) main" | \
+sudo tee /etc/apt/sources.list.d/hashicorp.list
+Update:
+sudo apt update
+Step 4: Install Vault
+sudo apt install -y vault
+Check:
+vault version
+You should get something similar to:
+Vault v1.x.x
+📸 Screenshot 1
+Take a screenshot showing:
+vault version
+This is your Installation screenshot.
+Step 5: Create Vault configuration
+Create the configuration directory:
+sudo mkdir -p /etc/vault.d
+Create the data directory:
+sudo mkdir -p /opt/vault/data
+Create the configuration:
+sudo nano /etc/vault.d/vault.hcl
+Paste:
+ui = true
+
+storage "file" {
+  path = "/opt/vault/data"
+}
+
+listener "tcp" {
+  address     = "127.0.0.1:8200"
+  tls_disable = true
+}
+
+api_addr = "http://127.0.0.1:8200"
+Save:
+Ctrl + O → Enter → Ctrl + X
+8200 is Vault's port. Your Jenkins is on 8080, so there is no conflict.
+Step 6: Start Vault
+For your assessment, you can run:
+sudo vault server -config=/etc/vault.d/vault.hcl
+Keep this terminal open.
+You should see Vault server logs.
+Open another terminal.
+Step 7: Configure Vault CLI
+In the second terminal:
+export VAULT_ADDR='http://127.0.0.1:8200'
+Check:
+echo $VAULT_ADDR
+Then:
+vault status
+Initially you should see:
+Initialized     false
+Sealed          true
+Step 8: Initialize Vault
+Run:
+vault operator init
+You will get output similar to:
+Unseal Key 1: xxxxxxxxx
+Unseal Key 2: xxxxxxxxx
+Unseal Key 3: xxxxxxxxx
+Unseal Key 4: xxxxxxxxx
+Unseal Key 5: xxxxxxxxx
+
+Initial Root Token: hvs.xxxxxxxxx
+⚠️ VERY IMPORTANT
+Save these values somewhere safe.
+Especially:
+Unseal Key 1
+Unseal Key 2
+Unseal Key 3
+Unseal Key 4
+Unseal Key 5
+Initial Root Token
+Do not put these real values into GitHub.
+Vault's default initialization uses Shamir secret sharing, where multiple key shares are generated and a threshold is required to unseal Vault. �
+HashiCorp Developer +1
+Step 9: Unseal Vault
+Run:
+vault operator unseal
+Paste:
+Unseal Key 1
+Then again:
+vault operator unseal
+Paste:
+Unseal Key 2
+Again:
+vault operator unseal
+Paste:
+Unseal Key 3
+After the required threshold is reached:
+vault status
+You should see:
+Initialized    true
+Sealed         false
+📸 Screenshot 2 — Configuration/Service Status
+Take a screenshot showing:
+vault status
+with:
+Initialized    true
+Sealed         false
+This is important for Task 1.
+Task 2 — Configure Authentication — 20 Marks
+Now authenticate as the root user.
+Step 10: Login
+vault login
+Paste your:
+Initial Root Token
+Then:
+vault status
+You should be authenticated.
+Step 11: Enable Userpass authentication
+Run:
+vault auth enable userpass
+Verify:
+vault auth list
+You should see:
+userpass/
+HashiCorp documents userpass as an authentication method suitable for human users. �
+HashiCorp Developer
+Step 12: Create a Vault user
+Let's create:
+Username: devops
+Password: Devops@123
+Run:
+vault write auth/userpass/users/devops \
+    password="Devops@123"
+Verify:
+vault list auth/userpass/users
+You should see:
+Keys
+----
+devops
+📸 Screenshot 3
+Take a screenshot showing:
+vault auth list
+and preferably:
+vault list auth/userpass/users
+This is your Authentication configuration screenshot.
+Task 3 — Enable KV Secrets Engine — 20 Marks
+Now we create the place where secrets will be stored.
+Step 13: Enable KV v2
+Run:
+vault secrets enable -path=secret kv-v2
+Verify:
+vault secrets list
+You should see:
+secret/    kv
+KV v2 stores versioned key/value secrets. �
+HashiCorp Developer +1
+Step 14: Verify KV configuration
+Run:
+vault secrets list -detailed
+You should see information about:
+Path: secret/
+Type: kv
+Options: map[version:2]
+📸 Screenshot 4
+Take a screenshot of:
+vault secrets list -detailed
+This demonstrates KV v2 is enabled.
+Task 4 — Store and Retrieve Secrets — 20 Marks
+Now we actually store a secret.
+Step 15: Store a secret
+Run:
+vault kv put secret/devops \
+    username="admin" \
+    password="Devops@123" \
+    environment="development"
+You should see:
+Success! Data written to: secret/devops
+Step 16: Retrieve the secret
+Run:
+vault kv get secret/devops
+You should see something like:
+====== Data ======
+
+Key            Value
+---            -----
+environment    development
+password       Devops@123
+username       admin
+Step 17: Retrieve a specific value
+For example:
+vault kv get -field=username secret/devops
+Output:
+admin
+Password:
+vault kv get -field=password secret/devops
+Output:
+Devops@123
+Step 18: Check secret metadata
+Because we're using KV v2:
+vault kv metadata get secret/devops
+You should see version information.
+📸 Screenshot 5
+Take a screenshot showing:
+vault kv get secret/devops
+This demonstrates Store and Retrieve Secrets.
+Task 5 — Create Policy and Verify Access — 20 Marks
+This is the most important part of the assessment because you demonstrate Vault ACL authorization.
+We will create a policy that allows the devops user to read only:
+secret/devops
+It will not allow access to other secrets.
+Step 19: Create another secret for testing
+As root:
+vault kv put secret/database \
+    username="dbadmin" \
+    password="DB@12345"
+Now Vault contains:
+secret/devops
+secret/database
+Step 20: Create policy file
+Create:
+nano devops-policy.hcl
+Paste:
+path "secret/data/devops" {
+  capabilities = ["read"]
+}
+Save:
+Ctrl + O → Enter → Ctrl + X
+Why secret/data/devops?
+Because you're using KV v2.
+The CLI hides the internal /data/ path when you use:
+vault kv get secret/devops
+But the ACL policy must reference the KV v2 data path. HashiCorp's KV v2 documentation likewise uses the mount/data/... path for ACL rules. �
+HashiCorp Developer
+Step 21: Upload the policy
+Run:
+vault policy write devops-policy devops-policy.hcl
+Verify:
+vault policy list
+You should see:
+default
+devops-policy
+root
+Step 22: Attach policy to the user
+Run:
+vault write auth/userpass/users/devops \
+    password="Devops@123" \
+    policies="devops-policy"
+Verify:
+vault read auth/userpass/users/devops
+You should see the policy.
+Step 23: Logout from root
+This is important.
+Run:
+vault logout
+Now you are no longer using the root token.
+Step 24: Login as devops
+Run:
+vault login -method=userpass username=devops
+Vault will ask:
+Password:
+Enter:
+Devops@123
+You should receive a token.
+Step 25: Verify the allowed secret
+Run:
+vault kv get secret/devops
+This should work.
+You should see:
+username
+password
+environment
+✅ This proves the policy works.
+Step 26: Test unauthorized access
+Now try:
+vault kv get secret/database
+This should fail with something similar to:
+Error making API request.
+
+Code: 403
+Errors:
+
+* permission denied
+This is exactly what you want.
+Your devops user can access:
+secret/devops
+but cannot access:
+secret/database
+That demonstrates least-privilege access control.
+Vault policies control which paths and operations a token/user can access. �
+HashiCorp Developer
+📸 Screenshot 6 — Policy Verification
+Take one screenshot containing:
+vault kv get secret/devops
+showing successful access.
+Then:
+vault kv get secret/database
+showing:
+403 permission denied
+This is your strongest screenshot for Task 5.
+Final Assessment Structure
+You can submit your work like this:
+Vault-Assessment/
+│
+├── README.md
+│
+├── screenshots/
+│   ├── 01-vault-installation.png
+│   ├── 02-vault-status.png
+│   ├── 03-authentication.png
+│   ├── 04-kv-engine.png
+│   ├── 05-secret-retrieval.png
+│   └── 06-policy-verification.png
+│
+└── policies/
+    └── devops-policy.hcl
+Your README can contain:
+# HashiCorp Vault Lab Assessment
+
+## Task 1
+Installed and initialized HashiCorp Vault.
+
+## Task 2
+Configured Userpass authentication.
+
+Username:
+devops
+
+## Task 3
+Enabled KV Version 2 secrets engine.
+
+Mount:
+secret/
+
+## Task 4
+Stored and retrieved secrets.
+
+Secret path:
+secret/devops
+
+## Task 5
+Created devops-policy.
+
+Allowed:
+secret/devops
+
+Denied:
+secret/database
+Complete Command Flow
+Once you understand the individual steps, your main commands are:
+sudo apt update
+sudo apt install -y gpg wget curl
+sudo apt install -y vault
+vault version
+Start Vault:
+sudo vault server -config=/etc/vault.d/vault.hcl
+New terminal:
+export VAULT_ADDR='http://127.0.0.1:8200'
+Initialize:
+vault operator init
+Unseal:
+vault operator unseal
+vault operator unseal
+vault operator unseal
+Login:
+vault login
+Authentication:
+vault auth enable userpass
+vault write auth/userpass/users/devops \
+    password="Devops@123"
+KV:
+vault secrets enable -path=secret kv-v2
+Secret:
+vault kv put secret/devops \
+    username="admin" \
+    password="Devops@123" \
+    environment="development"
+Retrieve:
+vault kv get secret/devops
+Second secret:
+vault kv put secret/database \
+    username="dbadmin" \
+    password="DB@12345"
+Policy:
+nano devops-policy.hcl
+Contents:
+path "secret/data/devops" {
+  capabilities = ["read"]
+}
+Apply:
+vault policy write devops-policy devops-policy.hcl
+Attach:
+vault write auth/userpass/users/devops \
+    password="Devops@123" \
+    policies="devops-policy"
+Logout:
+vault logout
+Login as user:
+vault login -method=userpass username=devops
+Test allowed:
+vault kv get secret/devops
+Test denied:
+vault kv get secret/database
+⚠️ One important thing
+For this assessment, don't use vault server -dev if your trainer expects you to demonstrate initialization and unsealing. Dev mode automatically initializes/unseals Vault and is intended for local experimentation, whereas your assessment explicitly asks for installation and initialization. �
+HashiCorp Developer +1
+Also, don't commit your root token or unseal keys to GitHub. The root token has unrestricted privileges and should be tightly controlled. �
+HashiCorp Developer
+If you want to do this right now on your Ubuntu machine, start with Step 1 (lsb_release -a) and send me the output/screenshot. I can then take you through the assessment one command at a time, including fixing any errors you encounter.
